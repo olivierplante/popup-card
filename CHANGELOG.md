@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.2
+- Add HACS and hassfest validation workflows
+
 ## 1.0.1
 - Test release to verify CI/CD pipeline
 

@@ -3,6 +3,6 @@
   "name": "Popup Card",
   "codeowners": ["@olivierplante"],
   "dependencies": ["http", "frontend", "lovelace"],
-  "documentation": "",
-  "version": "1.0.1"
+  "documentation": "https://github.com/olivierplante/popup-card",
+  "version": "1.0.2"
 }
