@@ -1,0 +1,8 @@
+{
+  "domain": "popup_card",
+  "name": "Popup Card",
+  "codeowners": ["@olivierplante"],
+  "dependencies": ["http", "frontend", "lovelace"],
+  "documentation": "",
+  "version": "1.0.1"
+}
