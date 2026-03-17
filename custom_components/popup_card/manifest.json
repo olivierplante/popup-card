@@ -4,5 +4,7 @@
   "codeowners": ["@olivierplante"],
   "dependencies": ["http", "frontend", "lovelace"],
   "documentation": "https://github.com/olivierplante/popup-card",
-  "version": "1.0.2"
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/olivierplante/popup-card/issues",
+  "version": "1.0.3"
 }
