@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+**CI** — Updated GitHub Actions to Node.js 24 (`actions/checkout@v6`).
+
 ## 1.0.4
 
 Add MIT license.
