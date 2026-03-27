@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+Add MIT license.
+
 ## 1.0.3
 - Add brand icon, issue tracker, IoT class, and validation workflows for HACS submission
 
