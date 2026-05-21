@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+**Add and remove from the UI** — Popup Card now uses Home Assistant's config flow. Install from Settings > Devices & Services > Add Integration. The Lovelace resource is automatically cleaned up when you remove the integration, so uninstalls no longer leave a dangling `/popup_card/popup-card.js` 404 in the browser console.
+
+**Automatic YAML migration** — Existing users with `popup_card:` in `configuration.yaml` are migrated automatically on first restart. Nothing breaks. The YAML line is no longer needed and can be removed at your convenience; a one-time deprecation warning in the logs will remind you.
+
+**Documentation restructure** — The README is now scoped to what the card does and how to install it. Usage and configuration details moved to dedicated pages under `docs/`.
+
 ## 1.0.5
 
 **CI** — Updated GitHub Actions to Node.js 24 (`actions/checkout@v6`).
