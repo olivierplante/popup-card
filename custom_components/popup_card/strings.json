@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Popup Card",
+        "description": "Adds the Popup Card to your Lovelace dashboards. No configuration is needed."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Popup Card is already installed."
+    }
+  }
+}
