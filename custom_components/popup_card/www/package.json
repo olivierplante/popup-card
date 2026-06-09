@@ -1,0 +1,17 @@
+{
+  "name": "popup-card-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Tests for the popup_card custom component's Lovelace JS module.",
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "2.1.5",
+    "jsdom": "25.0.1",
+    "vitest": "2.1.5"
+  }
+}

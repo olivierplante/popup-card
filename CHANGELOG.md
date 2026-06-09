@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+**Auto-close timer.** Popups can now dismiss themselves after a set time. Add `auto_close: 8` (seconds) to close the popup automatically; omit it (or use `0`) to keep the current click-to-close behavior. A very subtle progress bar drains across the top of the dialog as a countdown hint. To close silently instead, set `auto_close_progress: false`.
+
+**Style the popup frame.** You can now style the popup's frame directly from the card config:
+
+- `background`: dialog background color, transparency, or gradient
+- `backdrop`: color and opacity of the dimmed area behind the dialog
+- `backdrop_blur`: frosted-glass blur on the backdrop
+- `border` and `border_radius`: dialog border and corner rounding
+- `title_color`: header title color
+
+For anything beyond these, a `style` key accepts raw CSS scoped to the popup, so it never leaks to other popups. Raw `style` always wins over the discrete keys, which override the defaults.
+
 ## 1.1.0
 
 **Add and remove from the UI** — Popup Card now uses Home Assistant's config flow. Install from Settings > Devices & Services > Add Integration. The Lovelace resource is automatically cleaned up when you remove the integration, so uninstalls no longer leave a dangling `/popup_card/popup-card.js` 404 in the browser console.
