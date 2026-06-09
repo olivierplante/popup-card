@@ -8,6 +8,8 @@ A lightweight popup overlay for Home Assistant Lovelace dashboards. Render any H
 ## What you get
 
 - Render any HA Lovelace card in a popup (entities, markdown, apexcharts, vertical-stack, etc.)
+- Auto-close timer with an optional subtle countdown bar (`auto_close: 8`, `auto_close_progress: false` to hide the bar)
+- Style the popup frame — background, backdrop, blur, border, radius, title color — or pass raw CSS via `style`
 - Mobile full-screen mode with swipe-down-to-close
 - Close via backdrop click, X button, or Escape key
 - Theme-compatible using HA CSS variables
@@ -36,12 +38,16 @@ tap_action:
   action: fire-dom-event
   popup_card:
     title: Temperature history
+    auto_close: 10            # optional — close after 10s
+    backdrop_blur: "8px"      # optional — frosted-glass backdrop
     content:
       type: custom:apexcharts-card
       graph_span: 24h
       series:
         - entity: sensor.temperature
 ```
+
+See [Configuration](https://github.com/olivierplante/popup-card/blob/main/docs/configuration.md) for the auto-close timer and all styling options.
 
 ## Docs
 
