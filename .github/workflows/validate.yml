@@ -24,3 +24,23 @@ jobs:
     steps:
       - uses: "actions/checkout@v6"
       - uses: "home-assistant/actions/hassfest@master"
+
+  test:
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v6"
+      - name: Set up Node.js
+        uses: "actions/setup-node@v4"
+        with:
+          node-version: "24"
+      - name: Enable corepack and activate pinned pnpm
+        working-directory: custom_components/popup_card/www
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
+      - name: Install dependencies
+        working-directory: custom_components/popup_card/www
+        run: pnpm install --frozen-lockfile
+      - name: Run tests
+        working-directory: custom_components/popup_card/www
+        run: pnpm test -- --coverage

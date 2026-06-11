@@ -1,4 +1,0 @@
-# Build/test artifacts — regenerated in CI on every push.
-node_modules/
-coverage/
-.vite/

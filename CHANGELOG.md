@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+**Slimmer install.** The card's documentation is no longer duplicated inside the component folder that HACS installs into your Home Assistant config; it remains on the repository root where the README links to it. The public repository now also runs the card's automated test suite on every pull request. No functional changes.
+
 ## 1.2.0
 
 **Auto-close timer.** Popups can now dismiss themselves after a set time. Add `auto_close: 8` (seconds) to close the popup automatically; omit it (or use `0`) to keep the current click-to-close behavior. A very subtle progress bar drains across the top of the dialog as a countdown hint. To close silently instead, set `auto_close_progress: false`.
