@@ -12,12 +12,46 @@
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-function getHass() {
+/**
+ * The HA app root element. Besides holding `hass`, this element provides (via
+ * HA's `contextMixin`) the Lit contexts that cards consume — internationalization
+ * (relative-time state), registries/entities (icons), formatters, etc. A card
+ * rendered outside this element's subtree cannot resolve those contexts, so its
+ * relative-time state and registry-backed icons render blank.
+ */
+function getHassRoot() {
   const ha = document.querySelector("home-assistant");
-  if (ha && ha.hass) return ha.hass;
+  if (ha && ha.hass) return ha;
   const hc = document.querySelector("hc-main");
-  if (hc && hc.hass) return hc.hass;
+  if (hc && hc.hass) return hc;
   return null;
+}
+
+function getHass() {
+  const root = getHassRoot();
+  return root ? root.hass : null;
+}
+
+/**
+ * Where to mount the overlay. We render inside the provider's shadow root so
+ * `context-request` events from content cards bubble (composed) up to HA's
+ * providers. Falls back to <body> when there's no host/shadow root (non-standard
+ * embeds, tests) — degraded (no context) but still renders.
+ */
+function getMountRoot() {
+  const root = getHassRoot();
+  return (root && root.shadowRoot) || document.body;
+}
+
+/**
+ * Styles must live in the same root as the overlay, or shadow-DOM encapsulation
+ * hides them. In a ShadowRoot that's the root itself; in the <body> fallback,
+ * <head> works (same document, no encapsulation).
+ */
+function getStyleHost(mountRoot) {
+  const isShadow =
+    typeof ShadowRoot !== "undefined" && mountRoot instanceof ShadowRoot;
+  return isShadow ? mountRoot : document.head;
 }
 
 async function createCard(config) {
@@ -266,18 +300,24 @@ let touchCurrentY = 0;
 let isDragging = false;
 let scopeCounter = 0;
 
-function injectStyles() {
-  if (document.getElementById("popup-card-styles")) return;
+function injectStyles(styleHost) {
+  if (styleHost.querySelector("#popup-card-styles")) return;
   const style = document.createElement("style");
   style.id = "popup-card-styles";
   style.textContent = STYLES;
-  document.head.appendChild(style);
+  styleHost.appendChild(style);
 }
 
 export async function show(rawConfig) {
   // Close existing popup if any
   close();
-  injectStyles();
+
+  // Mount inside the HA context-provider subtree so content cards can resolve
+  // the Lit contexts they need (icons, relative-time state). Styles go in the
+  // same root, or shadow-DOM encapsulation would hide them.
+  const mountRoot = getMountRoot();
+  const styleHost = getStyleHost(mountRoot);
+  injectStyles(styleHost);
 
   const { title, content, autoCloseMs, showProgress, styleConfig } =
     parseConfig(rawConfig);
@@ -293,7 +333,7 @@ export async function show(rawConfig) {
   const scopedStyleEl = document.createElement("style");
   scopedStyleEl.setAttribute("data-popup-card-scoped", scopeClass);
   scopedStyleEl.textContent = buildPopupStyles(scopeClass, styleConfig);
-  document.head.appendChild(scopedStyleEl);
+  styleHost.appendChild(scopedStyleEl);
 
   // Create overlay
   overlay = document.createElement("div");
@@ -327,8 +367,8 @@ export async function show(rawConfig) {
     contentEl.innerHTML = `<div style="color:red;padding:16px">Error rendering card: ${err.message}</div>`;
   }
 
-  // Append to body
-  document.body.appendChild(overlay);
+  // Append to the mount root (provider subtree, or <body> fallback).
+  mountRoot.appendChild(overlay);
   document.body.style.overflow = "hidden";
 
   // Trigger open animation
