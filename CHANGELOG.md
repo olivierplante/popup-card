@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+**Correct icons and state inside popups.** Cards that show an entity's icon or a relative time (for example event entities, or any sensor with a timestamp) now render correctly inside a popup. Previously they could show a generic fallback icon with the state line missing. The popup now renders in the same place Home Assistant renders its own dialogs, so cards resolve their data exactly as they do on the dashboard.
+
 ## 1.2.1
 
 **Slimmer install.** The card's documentation is no longer duplicated inside the component folder that HACS installs into your Home Assistant config; it remains on the repository root where the README links to it. The public repository now also runs the card's automated test suite on every pull request. No functional changes.
