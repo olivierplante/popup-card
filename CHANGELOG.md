@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0
+
+**Sticky header.** `sticky_header: true` keeps the title and close button in place while the content scrolls. The popup sizes to its content, up to 80% of the screen height, and goes full screen on phones.
+
+**Bottom sheet.** `presentation: sheet` anchors the popup to the bottom edge with rounded top corners and rises into place. `centered` remains the default.
+
+**Close button on either side.** `close_position: left` mirrors the header, matching Home Assistant's own dialogs.
+
+**Back button closes the popup.** On phones, the back button and the back gesture now close the popup instead of leaving the dashboard.
+
+**Style the frame from your theme.** Every surface reads a CSS variable, so setting them once in your theme applies to every popup. Per-popup keys and raw `style` still take precedence. The configuration docs list them all.
+
+**The popup is now a real dialog.** It renders in the browser's top layer, so themes and layouts that use transforms can no longer clip it, and keyboard focus stays inside it. It also waits for its content to load before appearing, so cards that fetch data no longer make it jump.
+
+**Fixes.** The close button was nearly invisible on light themes and now follows your text color. The dialog background falls back to your theme's card color, so popups no longer render dark on a light dashboard.
+
 ## 1.2.2
 
 **Correct icons and state inside popups.** Cards that show an entity's icon or a relative time (for example event entities, or any sensor with a timestamp) now render correctly inside a popup. Previously they could show a generic fallback icon with the state line missing. The popup now renders in the same place Home Assistant renders its own dialogs, so cards resolve their data exactly as they do on the dashboard.
