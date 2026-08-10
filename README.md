@@ -9,9 +9,12 @@ A lightweight popup overlay for Home Assistant Lovelace dashboards. Render any H
 
 - Render any HA Lovelace card in a popup (entities, markdown, apexcharts, vertical-stack, etc.)
 - Auto-close timer with an optional subtle countdown bar (`auto_close: 8`, `auto_close_progress: false` to hide the bar)
-- Style the popup frame — background, backdrop, blur, border, radius, title color — or pass raw CSS via `style`
+- Sticky header that stays put while the content scrolls (`sticky_header: true`)
+- Centered or bottom sheet presentation (`presentation: sheet`), close button on either side (`close_position: left`)
+- Style the popup frame with config keys, raw CSS via `style`, or `--popup-card-*` variables set once in your theme
 - Mobile full-screen mode with swipe-down-to-close
-- Close via backdrop click, X button, or Escape key
+- Close via backdrop click, X button, Escape, swipe, or the back button
+- Renders in the browser's top layer, so themes and layouts using transforms cannot clip it
 - Theme-compatible using HA CSS variables
 - Works on desktop, tablets, and the Companion App (iOS/Android)
 - No external dependencies, no browser_mod

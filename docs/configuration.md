@@ -4,12 +4,16 @@
 
 ## Popup options
 
-| Key | Required | Description |
-|---|---|---|
-| `title` | No | Popup title displayed in the header |
-| `content` | Yes | HA Lovelace card configuration (any valid card type) |
-| `auto_close` | No | Seconds before the popup closes itself. Omit, `0`, or a negative value means it never auto-closes (default). |
-| `auto_close_progress` | No | Show the countdown bar while `auto_close` runs. Defaults to `true`; set `false` to close silently with no bar. |
+| Key | Values | Default | What it does |
+|---|---|---|---|
+| `title` | text | none | Text shown in the header, beside the close button. Omit it for a header with only the close button. |
+| `content` | card config | required | Any Lovelace card configuration. The card is built the same way your dashboard builds it, so any card type works, including custom ones. |
+| `auto_close` | seconds | never | Closes the popup by itself after this many seconds. `0`, a negative value, or omitting the key means it stays open until dismissed. Any manual close cancels the timer. |
+| `auto_close_progress` | `true` / `false` | `true` | Whether the thin countdown bar drains across the top of the dialog while `auto_close` runs. Set `false` to keep the timer but hide the bar. No effect without `auto_close`. |
+| `sticky_header` | `true` / `false` | `false` | Keeps the title and close button in place and scrolls only the content. Also changes how the popup is sized: it hugs its content up to `--popup-card-max-height`, and goes full screen on phones where cards that can fill their container will fill it. |
+| `close_position` | `right` / `left` | `right` | Which side the close button sits on. `left` mirrors the header so the button leads and the title follows, the way Home Assistant lays out its own dialogs. |
+| `presentation` | `centered` / `sheet` | `centered` | Where the popup sits. `centered` places it in the middle of the screen; `sheet` anchors it to the bottom edge with rounded top corners and rises into place. Unknown values fall back to `centered`. |
+| `style` | CSS | none | Raw CSS applied to this popup only, for anything the keys above and the styling keys below do not cover. See [Raw CSS](#raw-css-style). |
 
 ## Auto-close timer
 
@@ -45,10 +49,76 @@ popup_card:
     content: Closes in 5 seconds, no countdown bar.
 ```
 
+## Layout options
+
+### Sticky header
+
+By default the whole dialog scrolls, so a long content card scrolls the title
+and close button out of view. Set `sticky_header: true` to keep them in place
+and scroll only the content:
+
+```yaml
+popup_card:
+  title: History
+  sticky_header: true
+  content:
+    type: logbook
+    entities:
+      - light.living_room
+```
+
+The popup sizes itself to its content and starts scrolling once it reaches
+`--popup-card-max-height` (80vh by default). Below 768px it is full screen, and
+cards that can fill their container (the logbook and history cards, for
+example) fill it rather than stopping at their default height.
+
+Swipe-to-close still works: a downward swipe only dismisses the popup when
+everything under your finger is already at the top, so scrolling a list inside
+the popup does not close it.
+
+### Close button position
+
+`close_position: left` mirrors the header so the close button leads and the
+title follows, the way Home Assistant's own dialogs are laid out:
+
+```yaml
+popup_card:
+  title: Living room
+  close_position: left
+  content:
+    type: entities
+    entities:
+      - light.living_room
+```
+
+### Presentation
+
+`presentation: sheet` anchors the popup to the bottom edge with rounded top
+corners, instead of centering it in the viewport:
+
+```yaml
+popup_card:
+  title: Quick controls
+  presentation: sheet
+  sticky_header: true
+  content:
+    type: entities
+    entities:
+      - light.living_room
+      - switch.fan
+```
+
+The sheet keeps its shape at every width, including below 768px where a
+centered popup would go full screen. It respects the device safe area at the
+bottom.
+
+The sheet rises into place as it appears. Set `--popup-card-sheet-rise` to
+change that distance, or to `0` for no motion at all.
+
 ## Styling the popup frame
 
-The popup frame (dialog box, backdrop, header) is built from plain `<div>`s in
-the light DOM — it is **not** an `ha-card`, so `card_mod` cannot target it (see
+The popup frame is a `<dialog>` holding plain elements: backdrop, header and
+content. It is **not** an `ha-card`, so `card_mod` cannot target it (see
 [card_mod note in Usage](usage.md#using-card_mod)). Use these keys instead.
 
 ### Discrete style keys
@@ -57,12 +127,15 @@ All optional. Each overrides the corresponding default:
 
 | Key | Applies to | Default |
 |---|---|---|
-| `background` | Dialog background (color, rgba, or gradient) | `var(--ha-card-background, rgba(30,30,30,.95))` |
+| `background` | Dialog background (color, rgba, or gradient) | your theme's card background |
 | `backdrop` | Backdrop color behind the dialog | `rgba(0,0,0,.8)` |
 | `backdrop_blur` | Frosted-glass blur on the backdrop (any CSS length, e.g. `8px`) | none |
 | `border_radius` | Dialog corner radius | `16px` |
 | `border` | Dialog border | `1px solid rgba(255,255,255,.08)` |
 | `title_color` | Header title text color | `var(--primary-text-color, #fff)` |
+
+Each key sets the matching CSS variable from the table below on this popup
+only.
 
 ```yaml
 popup_card:
@@ -77,6 +150,49 @@ popup_card:
     entities:
       - light.living_room
 ```
+
+### CSS variables
+
+Every surface of the frame reads a CSS variable. Set one in a popup config
+through the discrete keys above, or set it once in your Home Assistant theme
+and every popup follows, including popups you did not write yourself.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `--popup-card-background` | `var(--ha-card-background, var(--card-background-color, rgba(30,30,30,.95)))` | Fill behind the header and content. Follows your theme's card color unless you override it. Accepts any background value, including gradients. |
+| `--popup-card-backdrop` | `rgba(0,0,0,.8)` | Color of the dimmed area covering the page behind the popup. Lower the alpha for a lighter scrim. |
+| `--popup-card-backdrop-filter` | `none` | Filter applied to whatever shows through the backdrop, most usefully `blur(8px)` for a frosted effect. Set by the `backdrop_blur` key. |
+| `--popup-card-radius` | `16px` | Corner rounding of the dialog. A `sheet` popup applies it to the top corners only. |
+| `--popup-card-border` | `1px solid rgba(255,255,255,.08)` | Border around the dialog. Set to `none` for a flat surface, which suits themes that use a shadow instead. |
+| `--popup-card-shadow` | `none` | Drop shadow under the dialog. Home Assistant's own dialogs use a shadow rather than a border. |
+| `--popup-card-width` | `90%` | Width the dialog aims for, as a share of the screen. The maximum below still caps it. |
+| `--popup-card-max-width` | `500px`, `640px` for `sheet` | Upper bound on width, so the popup does not stretch across a wide screen. |
+| `--popup-card-max-height` | `80vh`, `90vh` for `sheet` | Height at which the popup stops growing and its content starts scrolling. |
+| `--popup-card-padding` | `16px 24px 24px` | Space around the content card, between it and the dialog edges. |
+| `--popup-card-header-padding` | `20px 24px 0` | Space around the header row holding the title and close button. |
+| `--popup-card-title-color` | `var(--primary-text-color, #fff)` | Title text color. Follows your theme by default. |
+| `--popup-card-title-size` | `18px` | Title font size. Home Assistant's dialog titles are `20px`. |
+| `--popup-card-title-weight` | `700` | Title font weight. Home Assistant's dialog titles use `500`. |
+| `--popup-card-close-color` | `currentColor` | Close button color. Inheriting the text color keeps it visible on both light and dark surfaces. |
+| `--popup-card-progress-color` | `currentColor` | Color of the `auto_close` countdown bar, drawn at 25% opacity. |
+| `--popup-card-animation-duration` | `var(--ha-dialog-show-duration, 200ms)` | How long the popup takes to appear and disappear. Ignored when the system asks for reduced motion. |
+| `--popup-card-sheet-rise` | `24px` | How far a `sheet` popup travels upward as it appears. Set `0` for no motion. |
+
+To make every popup match Home Assistant's own dialogs, set the variables in
+your theme:
+
+```yaml
+my_theme:
+  popup-card-radius: 28px
+  popup-card-max-width: 580px
+  popup-card-backdrop: rgba(0, 0, 0, 0.25)
+  popup-card-shadow: 0 6px 12px -3px rgba(0, 0, 0, 0.12), 0 16px 32px -6px rgba(0, 0, 0, 0.2)
+  popup-card-border: none
+  popup-card-title-size: 20px
+  popup-card-title-weight: 500
+```
+
+Home Assistant themes declare variables without the leading `--`.
 
 ### Raw CSS (`style`)
 
@@ -106,7 +222,7 @@ Available class names for `style`:
 
 | Class | Element |
 |---|---|
-| `.popup-card-overlay` | Fullscreen flex container |
+| `.popup-card-overlay` | Fullscreen flex container (a modal `<dialog>`) |
 | `.popup-card-backdrop` | Dimming layer behind the dialog |
 | `.popup-card-dialog` | The dialog box |
 | `.popup-card-header` | Header row (title + close button) |
@@ -115,30 +231,81 @@ Available class names for `style`:
 | `.popup-card-content` | Where your content card renders |
 | `.popup-card-progress` | Auto-close countdown bar (only present when `auto_close` is set) |
 
-**Precedence:** base defaults < discrete keys < `style`. All rules are emitted
-at equal specificity in that order, so later rules win.
+Modifier classes are added when the matching option is used:
+
+| Class | Added when |
+|---|---|
+| `.popup-card-sticky` | `sticky_header: true`, on the dialog |
+| `.popup-card-sheet` | `presentation: sheet`, on the overlay |
+| `.popup-card-close-left` | `close_position: left`, on the header |
+
+The overlay also carries two state classes while it opens: `.popup-card-ready`
+once the frame is mounted, and `.popup-card-settled` once the content has
+stopped resizing and the popup is shown. Both are what the open animation
+hangs off, so avoid redefining them in `style`.
+
+**Precedence:** theme variables < discrete keys < `style`. Discrete keys are
+set on the popup itself, so they beat a value inherited from your theme. Raw
+`style` sets properties directly and is emitted last, so it beats both.
+
+## How a popup behaves
+
+**Closing.** A popup closes on a click outside it, the close button, the
+Escape key, a downward swipe, the back button or back gesture, and the
+`auto_close` timer if one is set. Whichever path is used, the popup tears down
+completely: the content card, its scoped styles, the timer and the history
+entry all go with it, so reopening starts clean.
+
+**Only one at a time.** Opening a popup closes any popup already open.
+
+**Focus and the page behind.** The popup is a modal dialog, so the rest of the
+page becomes inert while it is open: it cannot be clicked, tabbed into, or read
+past by a screen reader. Keyboard focus starts on the popup itself rather than
+on the close button, so no control shows a focus ring on open.
+
+**Stacking.** The popup renders in the browser's top layer, above the whole
+page, so a theme or dashboard layout that uses transforms, filters or
+containment cannot clip or cover it.
+
+**Waiting for content.** Cards that fetch their data, such as logbook and
+history, finish rendering after they are created. The popup keeps its surface
+hidden until the content stops changing size, up to a short cap, so it does not
+appear and then jump. The backdrop appears immediately, so the tap still feels
+answered.
+
+**Reduced motion.** When the system asks for reduced motion, the open and close
+animations are skipped.
 
 ## Mobile behavior
 
 On screens narrower than 768px:
 
-- Popup expands to full screen (no border radius, full width and height)
+- A `centered` popup expands to full screen (no border radius, full width and height)
+- A `sticky_header` popup is full screen, and a card that can fill its container fills it
+- A `sheet` popup keeps its shape, anchored to the bottom edge
 - Swipe down to close (80px threshold, with drag animation)
+- The back button and back gesture close the popup
 
 ## Theming
 
-The popup uses HA theme variables by default. The dialog background uses `var(--ha-card-background)` and text uses `var(--primary-text-color)`.
+The popup follows your theme without any extra configuration. The dialog
+background falls back through `--ha-card-background` then
+`--card-background-color`, the title uses `--primary-text-color`, and the close
+button uses the inherited text color.
 
-If your theme overrides these, the popup follows your theme without any extra configuration.
+For finer control, set any of the `--popup-card-*` variables listed above in
+your theme.
 
 ## How it works
 
 The component loads a JavaScript module that attaches a global listener on `document.body` for `ll-custom` events. When an event contains a `popup_card` key, it:
 
-1. Creates a `position: fixed` overlay appended to `document.body`
+1. Creates a `<dialog>` overlay and opens it with `showModal()`, so the browser renders it in the top layer (no ancestor transform, filter or z-index can clip it) and makes the rest of the page inert
 2. Uses `window.loadCardHelpers()` to instantiate the HA card from the config
 3. Passes the `hass` object to the card and keeps it updated
 4. Injects a per-popup scoped stylesheet (from the style keys + `style`) and a unique class on the overlay so styles can't leak between popups
-5. Cleans up the card element, the scoped stylesheet, and any `auto_close` timer on close to prevent leaks
+5. Pushes one history entry so the back button closes the popup, and consumes it on close
+6. Reveals the popup once its content has stopped resizing, so a card that loads its data does not make the popup jump as it appears
+7. Cleans up the card element, the scoped stylesheet, the history entry and any `auto_close` timer on close to prevent leaks
 
 The `ll-custom` event is a standard Home Assistant frontend event dispatched when a card uses `action: fire-dom-event`. No additional integrations are needed.

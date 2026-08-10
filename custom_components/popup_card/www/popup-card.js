@@ -54,9 +54,34 @@ function getStyleHost(mountRoot) {
   return isShadow ? mountRoot : document.head;
 }
 
-async function createCard(config) {
+// Matches the CSS breakpoint below which a popup goes full screen. Kept in
+// sync by hand: it decides whether the dialog has a definite height, which is
+// what makes the card fill hint safe.
+const FULL_SCREEN_QUERY = "(max-width: 768px)";
+
+function isFullScreenViewport() {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(FULL_SCREEN_QUERY).matches
+  );
+}
+
+/**
+ * Cards decide for themselves whether they may fill their container, and they
+ * read HA's `layout` hint to do it. The logbook card is the clearest case: it
+ * pins ha-logbook to 385px and only releases it to 100% for `grid` or `panel`.
+ * Without the hint a full-screen popup wraps a 385px list in dead space, and
+ * no amount of stretching from outside changes that.
+ *
+ * Only passed where the popup actually has a definite height to fill: a sticky
+ * popup on a narrow screen, which is full screen. Everywhere else the dialog
+ * sizes to its content, and a card told to fill an indefinite height collapses
+ * instead — that is what left the logbook three rows tall on desktop.
+ */
+async function createCard(config, { fillsHeight = false } = {}) {
   const helpers = await window.loadCardHelpers();
   const card = await helpers.createCardElement(config);
+  if (fillsHeight) card.layout = "panel";
   card.hass = getHass();
   return card;
 }
@@ -80,7 +105,9 @@ const STYLE_KEYS = [
  *
  * @param {object} config raw config from the ll-custom event
  * @returns {{title:string|undefined, content:any, autoCloseMs:number|null,
- *            showProgress:boolean, styleConfig:object}}
+ *            showProgress:boolean, stickyHeader:boolean,
+ *            closePosition:"left"|"right", presentation:"centered"|"sheet",
+ *            styleConfig:object}}
  */
 export function parseConfig(config) {
   const { title, content } = config;
@@ -96,13 +123,35 @@ export function parseConfig(config) {
   // effect when auto_close is set.
   const showProgress = config.auto_close_progress !== false;
 
+  // sticky_header: keep the title and close button in place while the body
+  // scrolls. Opt-in — the default keeps the whole dialog as one scroll area.
+  const stickyHeader = config.sticky_header === true;
+
+  // close_position: which side the ✕ sits on. HA's own dialogs put it on the
+  // left; ours has always been on the right, which stays the default.
+  const closePosition = config.close_position === "left" ? "left" : "right";
+
+  // presentation: how the surface is placed. `centered` is the historical
+  // behaviour and the default; `sheet` anchors it to the bottom edge. Unknown
+  // values fall back rather than rendering something unplaceable.
+  const presentation = config.presentation === "sheet" ? "sheet" : "centered";
+
   const styleConfig = {};
   for (const key of STYLE_KEYS) {
     if (config[key] != null) styleConfig[key] = config[key];
   }
   if (config.style != null) styleConfig.style = config.style;
 
-  return { title, content, autoCloseMs, showProgress, styleConfig };
+  return {
+    title,
+    content,
+    autoCloseMs,
+    showProgress,
+    stickyHeader,
+    closePosition,
+    presentation,
+    styleConfig,
+  };
 }
 
 // ─── Scoped styling ────────────────────────────────────────────────────
@@ -134,11 +183,16 @@ function scopeRawStyle(scopeClass, css) {
 /**
  * Build the per-popup scoped stylesheet.
  *
- * Rules are emitted in precedence order — base defaults, then discrete-key
- * overrides, then the user's raw `style:` block — all at equal specificity
- * (one class under the same scope). Later rules win, so:
+ * Discrete keys become --popup-card-* variables set on this popup's scope
+ * class; the raw `style:` block follows, setting properties directly. The
+ * frame's defaults live in the structural stylesheet, which reads those
+ * variables. Hence:
  *
- *     base defaults  <  discrete keys  <  user `style:`
+ *     theme variables  <  discrete keys  <  user `style:`
+ *
+ * Keys beat an inherited theme value because they are set on the overlay
+ * element itself; raw CSS beats keys because it sets the property, not the
+ * variable, and is emitted last.
  *
  * @param {string} scopeClass unique overlay class (e.g. popup-card-overlay-3)
  * @param {object} styleConfig discrete keys + optional raw `style`
@@ -148,23 +202,11 @@ export function buildPopupStyles(scopeClass, styleConfig = {}) {
   const scope = `.${scopeClass}`;
   const blocks = [];
 
-  // 1. Base defaults for the themeable surfaces (scoped so keys/style can
-  //    override at equal specificity).
-  blocks.push(`
-    ${scope} .popup-card-dialog {
-      background: var(--ha-card-background, rgba(30, 30, 30, 0.95));
-      border-radius: 16px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    ${scope} .popup-card-backdrop {
-      background: rgba(0, 0, 0, 0.8);
-    }
-    ${scope} .popup-card-title {
-      color: var(--primary-text-color, #fff);
-    }
-  `);
-
-  // 2. Discrete-key overrides.
+  // 1. Discrete keys, written as --popup-card-* variables on this popup's own
+  //    scope. The structural stylesheet reads those variables with defaults,
+  //    so a key set here beats any value inherited from the user's theme
+  //    (set on the overlay element itself) while still losing to the raw
+  //    `style:` block below, which sets properties directly and comes last.
   const {
     background,
     backdrop,
@@ -174,29 +216,22 @@ export function buildPopupStyles(scopeClass, styleConfig = {}) {
     title_color,
   } = styleConfig;
 
-  const dialogDecls = [];
-  if (background != null) dialogDecls.push(`background: ${background};`);
-  if (border_radius != null) dialogDecls.push(`border-radius: ${border_radius};`);
-  if (border != null) dialogDecls.push(`border: ${border};`);
-  if (dialogDecls.length) {
-    blocks.push(`${scope} .popup-card-dialog { ${dialogDecls.join(" ")} }`);
-  }
-
-  const backdropDecls = [];
-  if (backdrop != null) backdropDecls.push(`background: ${backdrop};`);
+  const vars = [];
+  if (background != null) vars.push(`--popup-card-background: ${background};`);
+  if (backdrop != null) vars.push(`--popup-card-backdrop: ${backdrop};`);
   if (backdrop_blur != null) {
-    backdropDecls.push(`backdrop-filter: blur(${backdrop_blur});`);
-    backdropDecls.push(`-webkit-backdrop-filter: blur(${backdrop_blur});`);
+    vars.push(`--popup-card-backdrop-filter: blur(${backdrop_blur});`);
   }
-  if (backdropDecls.length) {
-    blocks.push(`${scope} .popup-card-backdrop { ${backdropDecls.join(" ")} }`);
-  }
-
+  if (border_radius != null) vars.push(`--popup-card-radius: ${border_radius};`);
+  if (border != null) vars.push(`--popup-card-border: ${border};`);
   if (title_color != null) {
-    blocks.push(`${scope} .popup-card-title { color: ${title_color}; }`);
+    vars.push(`--popup-card-title-color: ${title_color};`);
+  }
+  if (vars.length) {
+    blocks.push(`${scope} { ${vars.join(" ")} }`);
   }
 
-  // 3. User raw `style:` — emitted last so it always wins.
+  // 2. User raw `style:` — emitted last so it always wins.
   if (styleConfig.style != null) {
     blocks.push(scopeRawStyle(scopeClass, String(styleConfig.style)));
   }
@@ -207,15 +242,34 @@ export function buildPopupStyles(scopeClass, styleConfig = {}) {
 // ─── Structural styles (not user-overridable surfaces) ─────────────────
 
 const STYLES = `
+  /* The overlay is a real <dialog> opened with showModal(): the browser puts
+     it in the top layer, so no ancestor transform, filter, contain or z-index
+     can clip or occlude it. These rules undo the UA dialog defaults (auto
+     margins, border, padding, fit-content sizing, canvas background) and turn
+     it back into a full-viewport flex container. A class selector outranks the
+     UA element selector, so no !important is needed. */
   .popup-card-overlay {
     position: fixed;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
     z-index: 999;
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: 0;
-    transition: opacity 150ms ease;
+  }
+  /* The scrim is the .popup-card-backdrop child, not ::backdrop — that keeps
+     the documented class API (and the backdrop/backdrop_blur keys) working. */
+  .popup-card-overlay::backdrop {
+    background: transparent;
   }
   .popup-card-overlay.open {
     opacity: 1;
@@ -223,42 +277,130 @@ const STYLES = `
   .popup-card-backdrop {
     position: absolute;
     inset: 0;
+    background: var(--popup-card-backdrop, rgba(0, 0, 0, 0.8));
+    -webkit-backdrop-filter: var(--popup-card-backdrop-filter, none);
+    backdrop-filter: var(--popup-card-backdrop-filter, none);
   }
   .popup-card-dialog {
     position: relative;
     z-index: 1;
-    max-width: 500px;
-    width: 90%;
-    max-height: 80vh;
+    /* --ha-card-background is read by ha-card but defined by no HA core
+       stylesheet, so stopping the chain there painted a dark slab on light
+       themes. It continues to --card-background-color before any literal. */
+    background: var(--popup-card-background, var(--ha-card-background, var(--card-background-color, rgba(30, 30, 30, 0.95))));
+    border-radius: var(--popup-card-radius, 16px);
+    border: var(--popup-card-border, 1px solid rgba(255, 255, 255, 0.08));
+    box-shadow: var(--popup-card-shadow, none);
+    max-width: var(--popup-card-max-width, 500px);
+    width: var(--popup-card-width, 90%);
+    max-height: var(--popup-card-max-height, 80vh);
     overflow-y: auto;
     scrollbar-width: none;
     box-sizing: border-box;
     touch-action: pan-y;
-    transition: transform 150ms ease;
+    /* Opens the way HA's dialogs do: opacity 0 -> 1 with scale 0.8 -> 1, ease,
+       over --ha-dialog-show-duration. scale is its own CSS property, so the
+       swipe gesture can keep using transform for the drag without the two
+       fighting. The transform transition stays at 150ms for that gesture. */
+    opacity: 0;
+    scale: 0.8;
+  }
+  /* showModal() focuses the first focusable descendant, which was the close
+     button — mobile then painted a focus ring on the X of every popup. The
+     surface claims focus instead, and shows no ring for it. */
+  .popup-card-dialog:focus,
+  .popup-card-dialog:focus-visible {
+    outline: none;
+  }
+  /* Transitions are armed only once the popup is ready, one frame after the
+     content card has laid out. Armed earlier, a card that grows after mount
+     animates the surface's height-derived translate and scale on its way in,
+     which reads as the popup drifting into place. */
+  .popup-card-ready {
+    transition: opacity var(--popup-card-animation-duration, var(--ha-dialog-show-duration, 200ms)) ease;
+  }
+  .popup-card-ready .popup-card-dialog {
+    transition:
+      transform 150ms ease,
+      scale var(--popup-card-animation-duration, var(--ha-dialog-show-duration, 200ms)) ease,
+      translate var(--popup-card-animation-duration, var(--ha-dialog-show-duration, 200ms)) ease,
+      opacity var(--popup-card-animation-duration, var(--ha-dialog-show-duration, 200ms)) ease;
+  }
+  /* The scrim fades in with .open, immediately. The surface waits for
+     .popup-card-settled, which lands once its content stops resizing —
+     measured on a real logbook sheet, the card's height went 122 -> 204 ->
+     156 -> 306 while the viewport never moved, and every one of those steps
+     jumped a bottom-anchored sheet. */
+  .popup-card-overlay.popup-card-settled .popup-card-dialog {
+    opacity: 1;
+    scale: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .popup-card-overlay,
+    .popup-card-dialog {
+      transition-duration: 0ms;
+    }
+    .popup-card-dialog {
+      scale: 1;
+    }
   }
   .popup-card-dialog::-webkit-scrollbar { display: none; }
   .popup-card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 20px 24px 0;
+    padding: var(--popup-card-header-padding, 20px 24px 0);
   }
   .popup-card-title {
-    font-size: 18px;
-    font-weight: 700;
+    color: var(--popup-card-title-color, var(--primary-text-color, #fff));
+    font-size: var(--popup-card-title-size, 18px);
+    font-weight: var(--popup-card-title-weight, 700);
   }
   .popup-card-close {
     background: none;
     border: none;
-    color: rgba(255, 255, 255, 0.5);
+    /* currentColor, not a hardcoded white: the X was invisible on any light
+       surface. Dimming is done with opacity so it works on both. */
+    color: var(--popup-card-close-color, currentColor);
+    opacity: 0.6;
     font-size: 20px;
     cursor: pointer;
     padding: 4px 8px;
     line-height: 1;
   }
-  .popup-card-close:hover { color: #fff; }
+  .popup-card-close:hover { opacity: 1; }
   .popup-card-content {
-    padding: 16px 24px 24px;
+    padding: var(--popup-card-padding, 16px 24px 24px);
+  }
+
+  /* sticky_header: the dialog stops scrolling and the content takes over, so
+     the header stays put. min-height:0 is what lets the content shrink inside
+     the flex column instead of overflowing it. */
+  .popup-card-dialog.popup-card-sticky {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Sizes to its content and scrolls once it reaches the maximum. The fill
+       hint in createCard() is withheld here, because a card told it may fill
+       collapses against an indefinite height — that is what left the logbook
+       three rows tall on desktop. */
+    height: auto;
+  }
+  .popup-card-dialog.popup-card-sticky .popup-card-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .popup-card-dialog.popup-card-sticky .popup-card-content::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* close_position: left — HA's own dialogs lead with the ✕. */
+  .popup-card-header.popup-card-close-left {
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   /* Auto-close countdown: very subtle draining bar pinned to the dialog top. */
@@ -270,7 +412,8 @@ const STYLES = `
     width: 100%;
     transform-origin: left center;
     transform: scaleX(1);
-    background: rgba(255, 255, 255, 0.25);
+    background: var(--popup-card-progress-color, currentColor);
+    opacity: 0.25;
     border-radius: 2px 2px 0 0;
     pointer-events: none;
   }
@@ -288,6 +431,47 @@ const STYLES = `
       border-radius: 0;
       border: none;
     }
+    /* Full screen here, unlike wider screens where a sticky popup sizes to its
+       content. That definite height is also what makes the fill hint safe, so
+       a card that can fill (logbook) uses the whole screen instead of leaving
+       dead space under itself. */
+    .popup-card-dialog.popup-card-sticky {
+      height: 100%;
+    }
+    .popup-card-dialog.popup-card-sticky .popup-card-content > * {
+      display: block;
+      height: 100%;
+    }
+  }
+
+  /* presentation: sheet — anchored to the bottom edge with rounded top
+     corners, sliding up instead of scaling in. Two classes in the selector, so
+     it outranks the single-class mobile full-screen rule above at any width.
+     translate is its own property: transform stays free for the swipe drag and
+     scale for the centered mode. */
+  .popup-card-overlay.popup-card-sheet {
+    align-items: flex-end;
+  }
+  .popup-card-overlay.popup-card-sheet .popup-card-dialog {
+    width: 100%;
+    max-width: var(--popup-card-max-width, 640px);
+    max-height: var(--popup-card-max-height, 90vh);
+    height: auto;
+    border: none;
+    border-radius: var(--popup-card-radius, 28px) var(--popup-card-radius, 28px) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    scale: 1;
+    /* The entrance is run from JS with explicit keyframes (revealSheet), so
+       no starting translate here and no transition below: a CSS transition
+       derives its start value from computed style when it starts, and WebKit
+       lets a layout change mid-flight re-derive it. On a bottom-anchored
+       surface that showed up as the sheet passing above its resting place and
+       settling back. Its own compositing layer keeps layout from perturbing
+       the animation, a documented WebKit workaround. */
+    will-change: transform, opacity;
+  }
+  .popup-card-overlay.popup-card-sheet .popup-card-dialog {
+    transition: none;
   }
 `;
 
@@ -295,6 +479,7 @@ const STYLES = `
 
 let overlay = null;
 let escHandler = null;
+let popstateHandler = null;
 let touchStartY = 0;
 let touchCurrentY = 0;
 let isDragging = false;
@@ -308,6 +493,90 @@ function injectStyles(styleHost) {
   styleHost.appendChild(style);
 }
 
+// How long a popup waits for its content to stop resizing before the surface
+// is revealed, and the cap that guarantees it appears regardless. Measured on
+// a real logbook sheet, the content settled by ~250ms.
+const SETTLE_QUIET_MS = 80;
+const SETTLE_CAP_MS = 400;
+
+/**
+ * Reveal the surface once its content has stopped changing size.
+ *
+ * Cards render progressively, and their height can shrink before it grows. A
+ * bottom-anchored sheet turns every step into a jump of its top edge, which
+ * reads as the popup overshooting and snapping back. Waiting costs nothing
+ * visible: the scrim is already up, so the tap feels answered.
+ */
+function revealWhenSettled(overlayEl, onSettled) {
+  let done = false;
+  let quietTimer = null;
+
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(quietTimer);
+    clearTimeout(overlayEl._settleCapTimer);
+    if (overlayEl._settleObserver) overlayEl._settleObserver.disconnect();
+    onSettled();
+  };
+
+  // Always fires, so a card that never stops resizing cannot hide the popup.
+  overlayEl._settleCapTimer = setTimeout(finish, SETTLE_CAP_MS);
+
+  if (typeof ResizeObserver !== "function") {
+    quietTimer = setTimeout(finish, SETTLE_QUIET_MS);
+    return;
+  }
+
+  const observer = new ResizeObserver(() => {
+    clearTimeout(quietTimer);
+    quietTimer = setTimeout(finish, SETTLE_QUIET_MS);
+  });
+  observer.observe(overlayEl.querySelector(".popup-card-dialog"));
+  overlayEl._settleObserver = observer;
+
+  // No resize at all (static content) still has to resolve.
+  quietTimer = setTimeout(finish, SETTLE_QUIET_MS);
+}
+
+// The sheet's entrance distance, when the theme does not set one.
+const SHEET_RISE_DEFAULT = "24px";
+const SHEET_DURATION_DEFAULT = 200;
+
+/**
+ * Animate a sheet into place with explicit keyframes.
+ *
+ * Not a CSS transition: a transition derives its start value from computed
+ * style at the moment it starts, and WebKit lets a layout change mid-flight
+ * re-derive it. Measured on a real iPhone, that showed the surface passing
+ * above its resting place and settling back, with the overlay, the page scroll
+ * and the viewport all steady. Keyframes state both ends outright, so nothing
+ * can reinterpret them.
+ */
+function revealSheet(overlayEl) {
+  const dialog = overlayEl.querySelector(".popup-card-dialog");
+  if (!dialog || typeof dialog.animate !== "function") return;
+
+  const styles = getComputedStyle(dialog);
+  const rise =
+    (styles.getPropertyValue("--popup-card-sheet-rise") || "").trim() ||
+    SHEET_RISE_DEFAULT;
+  // A theme can opt out of the motion entirely.
+  if (parseFloat(rise) === 0) return;
+
+  const duration =
+    parseFloat(styles.getPropertyValue("--popup-card-animation-duration")) ||
+    SHEET_DURATION_DEFAULT;
+
+  dialog.animate(
+    [
+      { translate: `0 ${rise}`, opacity: 0 },
+      { translate: "0 0", opacity: 1 },
+    ],
+    { duration, easing: "ease" },
+  );
+}
+
 export async function show(rawConfig) {
   // Close existing popup if any
   close();
@@ -319,8 +588,16 @@ export async function show(rawConfig) {
   const styleHost = getStyleHost(mountRoot);
   injectStyles(styleHost);
 
-  const { title, content, autoCloseMs, showProgress, styleConfig } =
-    parseConfig(rawConfig);
+  const {
+    title,
+    content,
+    autoCloseMs,
+    showProgress,
+    stickyHeader,
+    closePosition,
+    presentation,
+    styleConfig,
+  } = parseConfig(rawConfig);
   if (!content) return;
 
   const withProgressBar = Boolean(autoCloseMs) && showProgress;
@@ -335,15 +612,28 @@ export async function show(rawConfig) {
   scopedStyleEl.textContent = buildPopupStyles(scopeClass, styleConfig);
   styleHost.appendChild(scopedStyleEl);
 
-  // Create overlay
-  overlay = document.createElement("div");
-  overlay.className = `popup-card-overlay ${scopeClass}`;
+  // Create overlay. A <dialog> rather than a div: opened modally below, it
+  // renders in the browser's top layer and makes the rest of the document
+  // inert (focus containment, no stray clicks) with no code of our own.
+  overlay = document.createElement("dialog");
+  overlay.className =
+    presentation === "sheet"
+      ? `popup-card-overlay popup-card-sheet ${scopeClass}`
+      : `popup-card-overlay ${scopeClass}`;
   overlay._scopedStyleEl = scopedStyleEl;
+  const dialogClasses = stickyHeader
+    ? "popup-card-dialog popup-card-sticky"
+    : "popup-card-dialog";
+  const headerClasses =
+    closePosition === "left"
+      ? "popup-card-header popup-card-close-left"
+      : "popup-card-header";
+
   overlay.innerHTML = `
     <div class="popup-card-backdrop"></div>
-    <div class="popup-card-dialog">
+    <div class="${dialogClasses}" tabindex="-1" autofocus>
       ${withProgressBar ? '<div class="popup-card-progress"></div>' : ""}
-      <div class="popup-card-header">
+      <div class="${headerClasses}">
         <span class="popup-card-title">${title || ""}</span>
         <button class="popup-card-close">✕</button>
       </div>
@@ -354,7 +644,9 @@ export async function show(rawConfig) {
   // Render HA card
   const contentEl = overlay.querySelector(".popup-card-content");
   try {
-    const card = await createCard(content);
+    const card = await createCard(content, {
+      fillsHeight: stickyHeader && isFullScreenViewport(),
+    });
     contentEl.appendChild(card);
 
     // Keep hass updated on the card
@@ -367,15 +659,40 @@ export async function show(rawConfig) {
     contentEl.innerHTML = `<div style="color:red;padding:16px">Error rendering card: ${err.message}</div>`;
   }
 
-  // Append to the mount root (provider subtree, or <body> fallback).
+  // Append to the mount root (provider subtree, or <body> fallback), then open
+  // modally. showModal() requires the element to be connected, so order
+  // matters. The guard keeps non-standard embeds (and any browser without
+  // dialog support) rendering an inline popup rather than nothing at all.
   mountRoot.appendChild(overlay);
+  if (typeof overlay.showModal === "function") {
+    overlay.showModal();
+  } else {
+    overlay.setAttribute("open", "");
+  }
   document.body.style.overflow = "hidden";
 
-  // Trigger open animation
+  // Frame 1: the content card has laid out, so size it if it manages its own
+  // scrolling and only then arm the transitions. Frame 2: open, so the
+  // animation runs against a settled box. Arming earlier makes a card that
+  // grows after mount animate the surface into place, which reads as drift.
+  // Captured, so frames queued by a popup that has since been closed and
+  // replaced cannot arm the one that took its place.
+  const openedOverlay = overlay;
+
   requestAnimationFrame(() => {
+    if (overlay !== openedOverlay) return;
+    overlay.classList.add("popup-card-ready");
+
     requestAnimationFrame(() => {
-      if (!overlay) return;
+      if (overlay !== openedOverlay) return;
       overlay.classList.add("open");
+
+      // The scrim is up; hold the surface until its content stops resizing.
+      revealWhenSettled(openedOverlay, () => {
+        if (overlay !== openedOverlay) return;
+        openedOverlay.classList.add("popup-card-settled");
+        if (presentation === "sheet") revealSheet(openedOverlay);
+      });
 
       // Kick off the auto-close drain bar in the same frame the overlay
       // becomes visible, so the bar's transition matches the timer.
@@ -396,10 +713,35 @@ export async function show(rawConfig) {
   overlay.querySelector(".popup-card-backdrop").addEventListener("click", close);
   overlay.querySelector(".popup-card-close").addEventListener("click", close);
 
+  // Escape can reach us twice in a real browser: the modal dialog's native
+  // `cancel` event, and our own keydown listener (kept because `cancel` is not
+  // fired everywhere — happy-dom, older webviews). preventDefault() stops the
+  // browser closing the dialog behind our back, so close() stays the single
+  // teardown path. Both entries are idempotent.
+  overlay.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    close();
+  });
+
   escHandler = (e) => {
     if (e.key === "Escape") close();
   };
   document.addEventListener("keydown", escHandler);
+
+  // Back button and the mobile back gesture close the popup, the way HA's own
+  // dialogs do. One entry is pushed on open and consumed on close, so the
+  // history stack is left exactly as we found it. When the user closes BY
+  // going back the entry is already gone, hence the flag.
+  if (typeof history !== "undefined" && typeof history.pushState === "function") {
+    history.pushState({ popupCard: true }, "");
+    overlay._historyPushed = true;
+
+    popstateHandler = () => {
+      if (overlay) overlay._historyPushed = false;
+      close();
+    };
+    window.addEventListener("popstate", popstateHandler);
+  }
 
   // Mobile: swipe down to close
   const dialog = overlay.querySelector(".popup-card-dialog");
@@ -411,36 +753,95 @@ export async function show(rawConfig) {
 export function close() {
   if (!overlay) return;
 
-  if (overlay._autoCloseTimer) {
-    clearTimeout(overlay._autoCloseTimer);
-  }
-
-  if (overlay._hassInterval) {
-    clearInterval(overlay._hassInterval);
-  }
-
-  if (overlay._scopedStyleEl) {
-    overlay._scopedStyleEl.remove();
-  }
-
-  overlay.remove();
+  // Detach the module state first. Closing the dialog fires events, and the
+  // swipe and auto-close paths can call back in, so every re-entry has to be
+  // a no-op rather than a second teardown.
+  const dialogEl = overlay;
   overlay = null;
+
+  if (dialogEl._autoCloseTimer) {
+    clearTimeout(dialogEl._autoCloseTimer);
+  }
+
+  if (dialogEl._hassInterval) {
+    clearInterval(dialogEl._hassInterval);
+  }
+
+  if (dialogEl._scopedStyleEl) {
+    dialogEl._scopedStyleEl.remove();
+  }
+
+  if (dialogEl._settleObserver) {
+    dialogEl._settleObserver.disconnect();
+  }
+
+  if (dialogEl._settleCapTimer) {
+    clearTimeout(dialogEl._settleCapTimer);
+  }
+
+  // Close before removing: a <dialog> detached while still open stays
+  // registered in the top layer in some engines.
+  if (typeof dialogEl.close === "function" && dialogEl.open) {
+    dialogEl.close();
+  }
+
+  dialogEl.remove();
   document.body.style.overflow = "";
 
   if (escHandler) {
     document.removeEventListener("keydown", escHandler);
     escHandler = null;
   }
+
+  // Unhook before popping, so consuming our own entry cannot re-enter here.
+  if (popstateHandler) {
+    window.removeEventListener("popstate", popstateHandler);
+    popstateHandler = null;
+  }
+
+  if (
+    dialogEl._historyPushed &&
+    typeof history !== "undefined" &&
+    typeof history.back === "function"
+  ) {
+    history.back();
+  }
 }
 
 // ─── Swipe to Close ────────────────────────────────────────────────────
+
+/**
+ * Is anything under the finger scrolled away from its own top?
+ *
+ * Reading one fixed element is not enough: content cards like logbook and
+ * history scroll INSIDE themselves, so our container's scrollTop stays 0
+ * forever and every downward drag would dismiss the popup instead of
+ * scrolling it. Walking the drag's own composed path (which crosses shadow
+ * boundaries, where those scrollers live) means a swipe dismisses only when
+ * everything under it is at its top, and a drag outside any scroller always
+ * dismisses.
+ */
+function pathIsScrolled(event, dialog) {
+  const path =
+    typeof event.composedPath === "function" ? event.composedPath() : [];
+  const nodes = path.length ? path : [event.target];
+
+  for (const node of nodes) {
+    // Stop at the frame: the dialog is checked separately below, because it
+    // is the scroller itself when sticky_header is off.
+    if (node === dialog) break;
+    if (node && node.scrollTop > 0) return true;
+  }
+
+  return dialog.scrollTop > 0;
+}
 
 function onTouchStart(e) {
   const dialog = overlay?.querySelector(".popup-card-dialog");
   if (!dialog) return;
 
-  // Only enable swipe when scrolled to top
-  if (dialog.scrollTop > 0) return;
+  // Only dismiss when everything under the finger is at its own top.
+  if (pathIsScrolled(e, dialog)) return;
 
   touchStartY = e.touches[0].clientY;
   touchCurrentY = touchStartY;
