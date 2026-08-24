@@ -100,6 +100,176 @@ const STYLE_KEYS = [
   "title_color",
 ];
 
+// ─── Jinja templating ──────────────────────────────────────────────────
+
+// Config keys we define ourselves. Nothing downstream ever renders these, so
+// templating them cannot collide with a card's own templating. The two boolean
+// options are deliberately absent: render_template returns strings, and the
+// string "false" is not false, so templating them would silently flip them.
+const OWN_TEMPLATE_KEYS = [
+  "title",
+  "style",
+  "auto_close",
+  "close_position",
+  "presentation",
+  ...STYLE_KEYS,
+];
+
+// Key names that hold entity ids, matched at any depth inside `content`. Every
+// core card that names an entity uses one of these, and containers (cards,
+// elements, badges, conditions, series) are reached by walking rather than by
+// knowing their shape, so custom cards work without us knowing their schema.
+//
+// Matching on the key name is what keeps the markdown card safe: its templated
+// field is `content`, which we never touch, while its entity key is `entity_id`,
+// a scoping list that is ours to resolve.
+const ENTITY_KEYS = new Set([
+  "entity",
+  "entities",
+  "entity_id",
+  "camera_image",
+  "image_entity",
+]);
+
+/**
+ * Whether a value is a string carrying Jinja. Only opening markers count:
+ * minified CSS in `style:` closes media queries with `}}`, which must not be
+ * mistaken for a template.
+ */
+export function hasTemplate(value) {
+  return (
+    typeof value === "string" &&
+    (value.includes("{{") || value.includes("{%"))
+  );
+}
+
+function deepClone(value) {
+  if (Array.isArray(value)) return value.map(deepClone);
+  if (value && typeof value === "object") {
+    const clone = {};
+    for (const key of Object.keys(value)) clone[key] = deepClone(value[key]);
+    return clone;
+  }
+  return value;
+}
+
+/**
+ * Resolve every Jinja string in a popup_card config, returning a new config.
+ *
+ * The whole string goes to the renderer, not just what sits between the
+ * braces, so `sensor.{{ base }}_memory` interpolates the way it reads.
+ *
+ * Renders are started for the entire config before any is awaited, so a config
+ * with several templates costs one round trip rather than one each.
+ *
+ * @param {object} config raw popup_card config
+ * @param {(template: string) => Promise<string>|string} renderFn
+ * @returns {Promise<object>} a clone with rendered values substituted
+ */
+export async function resolveTemplates(config, renderFn) {
+  // Explicit opt-out, so a config can turn the whole pass off if our walk ever
+  // collides with a card that renders its own Jinja under an entity-typed key.
+  // Only `false` disables it, never a bare falsy check.
+  if (config && config.render_templates === false) return config;
+
+  const clone = deepClone(config);
+  const pending = [];
+
+  const render = (holder, key) => {
+    pending.push(
+      Promise.resolve(renderFn(holder[key])).then((result) => {
+        holder[key] = result;
+      }),
+    );
+  };
+
+  // A value sitting under an entity-typed key: a string renders, a list renders
+  // its string items, and anything else keeps walking (rows given as objects).
+  const walkEntityValue = (holder, key) => {
+    const value = holder[key];
+    if (hasTemplate(value)) return render(holder, key);
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        if (hasTemplate(item)) render(value, index);
+        else if (item && typeof item === "object") walkContent(item);
+      });
+      return;
+    }
+    if (value && typeof value === "object") walkContent(value);
+  };
+
+  function walkContent(node) {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        if (child && typeof child === "object") walkContent(child);
+      }
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    for (const key of Object.keys(node)) {
+      if (ENTITY_KEYS.has(key)) {
+        walkEntityValue(node, key);
+      } else if (node[key] && typeof node[key] === "object") {
+        walkContent(node[key]);
+      }
+    }
+  }
+
+  for (const key of OWN_TEMPLATE_KEYS) {
+    if (hasTemplate(clone[key])) render(clone, key);
+  }
+  if (clone.content && typeof clone.content === "object") {
+    walkContent(clone.content);
+  }
+
+  // Nothing to render: hand back the caller's own object rather than a
+  // plain-data clone, which would flatten anything a JS-dispatched config
+  // carries beyond JSON.
+  if (!pending.length) return config;
+
+  await Promise.all(pending);
+  return clone;
+}
+
+/**
+ * Render one template over HA's websocket.
+ *
+ * render_template is a subscription that pushes on every change. A popup is
+ * short-lived and re-opened constantly, so opening it is the refresh: we take
+ * the first result and unsubscribe, leaving close() nothing extra to tear down.
+ */
+function renderTemplate(hass, template) {
+  return new Promise((resolve, reject) => {
+    let unsubscribe = null;
+    let settled = false;
+
+    const release = () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+      unsubscribe = "released";
+    };
+
+    const onMessage = (message) => {
+      if (settled) return;
+      settled = true;
+      release();
+      if (message && message.error) reject(new Error(message.error));
+      else resolve(message ? message.result : "");
+    };
+
+    hass.connection
+      .subscribeMessage(onMessage, {
+        type: "render_template",
+        template,
+        report_errors: true,
+      })
+      .then((fn) => {
+        unsubscribe = fn;
+        // The first push can land before the subscription promise resolves.
+        if (settled) release();
+      }, reject);
+  });
+}
+
 /**
  * Normalize a raw popup_card config into the shape show() consumes.
  *
@@ -588,6 +758,23 @@ export async function show(rawConfig) {
   const styleHost = getStyleHost(mountRoot);
   injectStyles(styleHost);
 
+  // Resolve any Jinja in the config before parsing it, so everything
+  // downstream sees plain values. Untemplated configs never touch the
+  // websocket, so the common case costs nothing.
+  const templateHass = getHass();
+  const renderFn =
+    templateHass && templateHass.connection
+      ? (template) => renderTemplate(templateHass, template)
+      : (template) => template;
+
+  let config = rawConfig;
+  let templateError = null;
+  try {
+    config = await resolveTemplates(rawConfig, renderFn);
+  } catch (err) {
+    templateError = err;
+  }
+
   const {
     title,
     content,
@@ -597,7 +784,7 @@ export async function show(rawConfig) {
     closePosition,
     presentation,
     styleConfig,
-  } = parseConfig(rawConfig);
+  } = parseConfig(config);
   if (!content) return;
 
   const withProgressBar = Boolean(autoCloseMs) && showProgress;
@@ -644,6 +831,9 @@ export async function show(rawConfig) {
   // Render HA card
   const contentEl = overlay.querySelector(".popup-card-content");
   try {
+    // A failed template surfaces in the popup itself rather than leaving an
+    // empty dialog: the message names what broke.
+    if (templateError) throw templateError;
     const card = await createCard(content, {
       fillsHeight: stickyHeader && isFullScreenViewport(),
     });
@@ -656,7 +846,9 @@ export async function show(rawConfig) {
     }, 1000);
     overlay._hassInterval = hassInterval;
   } catch (err) {
-    contentEl.innerHTML = `<div style="color:red;padding:16px">Error rendering card: ${err.message}</div>`;
+    const label =
+      err === templateError ? "Template error" : "Error rendering card";
+    contentEl.innerHTML = `<div style="color:red;padding:16px">${label}: ${err.message}</div>`;
   }
 
   // Append to the mount root (provider subtree, or <body> fallback), then open

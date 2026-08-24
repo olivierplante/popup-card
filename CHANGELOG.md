@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+**Templates in popup configs.** Values can now carry Jinja, rendered by Home Assistant when the popup opens. A popup can work out which entity to show rather than naming one directly, so a single configuration can serve many entities. Templates are resolved each time the popup opens, so re-opening it picks up the current state. They apply to the popup's own options and to entity fields inside `content` at any depth, including in custom cards, while each card's own templating is left untouched so a markdown card keeps updating the way it always has. The configuration docs cover the details.
+
+**Turning templates off.** `render_templates: false` passes every value through exactly as written, for the rare card that renders its own templates in a field this card would otherwise resolve.
+
+**Visible template errors.** A template that fails opens the popup with the error in place of the content, naming what broke, rather than showing an empty dialog.
+
 ## 1.3.0
 
 **Sticky header.** `sticky_header: true` keeps the title and close button in place while the content scrolls. The popup sizes to its content, up to 80% of the screen height, and goes full screen on phones.
