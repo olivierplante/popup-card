@@ -14,6 +14,85 @@
 | `close_position` | `right` / `left` | `right` | Which side the close button sits on. `left` mirrors the header so the button leads and the title follows, the way Home Assistant lays out its own dialogs. |
 | `presentation` | `centered` / `sheet` | `centered` | Where the popup sits. `centered` places it in the middle of the screen; `sheet` anchors it to the bottom edge with rounded top corners and rises into place. Unknown values fall back to `centered`. |
 | `style` | CSS | none | Raw CSS applied to this popup only, for anything the keys above and the styling keys below do not cover. See [Raw CSS](#raw-css-style). |
+| `render_templates` | `true` / `false` | `true` | Whether Jinja templates in this config are rendered when the popup opens. Set `false` to pass every value through untouched. See [Templates](#templates). |
+
+## Templates
+
+Values in a popup config can carry [Jinja
+templates](https://www.home-assistant.io/docs/configuration/templating/). They
+are rendered by Home Assistant when the popup opens, so a config can work out
+an entity rather than name one:
+
+```yaml
+popup_card:
+  title: "{{ state_attr('sensor.nas_cpu', 'friendly_name') }}"
+  content:
+    type: history-graph
+    entities:
+      - "{{ states('sensor.active_device') }}"
+```
+
+The whole string is rendered, not only what sits between the braces, so a
+value can be built from a fragment:
+
+```yaml
+content:
+  type: tile
+  entity: "sensor.{{ states('input_text.room') }}_temperature"
+```
+
+### Where templates are rendered
+
+Templates are rendered in the popup options this card defines: `title`,
+`style`, `auto_close`, `close_position`, `presentation`, and all of the
+[discrete style keys](#discrete-style-keys). That makes a frame colour able to
+follow a state:
+
+```yaml
+popup_card:
+  background: "{{ 'rgba(80, 20, 20, 0.9)' if is_state('binary_sensor.alarm', 'on') else 'rgba(20, 20, 20, 0.9)' }}"
+```
+
+Inside `content`, templates are rendered in keys that hold entity ids, at any
+depth: `entity`, `entities`, `entity_id`, `camera_image` and `image_entity`.
+Because the match is on the key name, this works in nested stacks and in custom
+cards without this card knowing their configuration.
+
+### Where they are not
+
+Everything else in `content` is passed through untouched, which leaves each
+card's own templating to that card. The markdown card is the clearest case: its
+`content` is Jinja that Home Assistant renders live and keeps up to date, so
+rendering it here would freeze it at the moment the popup opened.
+
+`auto_close_progress` and `sticky_header` are not rendered either. A template
+produces a string, and the string `"false"` is not `false`, so templating them
+would silently turn them on.
+
+### When they are rendered
+
+Once, each time the popup opens. Opening the popup is the refresh: values do
+not update while it is on screen, and re-opening it evaluates them again. A
+config with several templates costs a single round trip. A config with none
+never contacts the server at all.
+
+If a template fails, the popup opens with the error in place of the content
+rather than showing an empty dialog.
+
+### Turning it off
+
+Set `render_templates: false` to pass every value through exactly as written:
+
+```yaml
+popup_card:
+  render_templates: false
+  content:
+    type: custom:some-card
+    entity: "{{ handled_by_the_card_itself }}"
+```
+
+This is the escape hatch for a card that renders its own templates in a key
+this card would otherwise resolve. Only `false` disables it.
 
 ## Auto-close timer
 

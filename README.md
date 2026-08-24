@@ -8,6 +8,7 @@ A lightweight popup overlay for Home Assistant Lovelace dashboards. Render any H
 ## What you get
 
 - Render any HA Lovelace card in a popup (entities, markdown, apexcharts, vertical-stack, etc.)
+- Jinja templates in popup configs, so a popup can work out which entity to show ([Templates](https://github.com/olivierplante/popup-card/blob/main/docs/configuration.md#templates))
 - Auto-close timer with an optional subtle countdown bar (`auto_close: 8`, `auto_close_progress: false` to hide the bar)
 - Sticky header that stays put while the content scrolls (`sticky_header: true`)
 - Centered or bottom sheet presentation (`presentation: sheet`), close button on either side (`close_position: left`)
