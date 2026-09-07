@@ -15,6 +15,7 @@
 | `presentation` | `centered` / `sheet` | `centered` | Where the popup sits. `centered` places it in the middle of the screen; `sheet` anchors it to the bottom edge with rounded top corners and rises into place. Unknown values fall back to `centered`. |
 | `style` | CSS | none | Raw CSS applied to this popup only, for anything the keys above and the styling keys below do not cover. See [Raw CSS](#raw-css-style). |
 | `render_templates` | `true` / `false` | `true` | Whether Jinja templates in this config are rendered when the popup opens. Set `false` to pass every value through untouched. See [Templates](#templates). |
+| `swipe_to_close` | `true` / `false` | `true` | Whether a downward swipe dismisses the popup. Set `false` to turn the gesture off entirely and keep only the close button, backdrop click, Escape, and the back button/gesture. |
 
 ## Templates
 
@@ -149,11 +150,16 @@ popup_card:
 The popup sizes itself to its content and starts scrolling once it reaches
 `--popup-card-max-height` (80vh by default). Below 768px it is full screen, and
 cards that can fill their container (the logbook and history cards, for
-example) fill it rather than stopping at their default height.
+example) fill it rather than stopping at their default height. On iOS the
+full-screen popup keeps clear of the status bar and the home indicator.
 
 Swipe-to-close still works: a downward swipe only dismisses the popup when
 everything under your finger is already at the top, so scrolling a list inside
-the popup does not close it.
+the popup does not close it. The swipe also has to be predominantly vertical,
+and it cannot start on a slider or a switch, so dragging a control inside the
+popup never gets mistaken for a swipe to close. On a popup whose content is
+mostly one large slider, the header remains a reliable place to start the
+swipe. Set `swipe_to_close: false` to turn the gesture off entirely.
 
 ### Close button position
 
@@ -330,10 +336,10 @@ set on the popup itself, so they beat a value inherited from your theme. Raw
 ## How a popup behaves
 
 **Closing.** A popup closes on a click outside it, the close button, the
-Escape key, a downward swipe, the back button or back gesture, and the
-`auto_close` timer if one is set. Whichever path is used, the popup tears down
-completely: the content card, its scoped styles, the timer and the history
-entry all go with it, so reopening starts clean.
+Escape key, a downward swipe (unless `swipe_to_close: false`), the back button
+or back gesture, and the `auto_close` timer if one is set. Whichever path is
+used, the popup tears down completely: the content card, its scoped styles,
+the timer and the history entry all go with it, so reopening starts clean.
 
 **Only one at a time.** Opening a popup closes any popup already open.
 

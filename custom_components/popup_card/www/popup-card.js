@@ -277,7 +277,7 @@ function renderTemplate(hass, template) {
  * @returns {{title:string|undefined, content:any, autoCloseMs:number|null,
  *            showProgress:boolean, stickyHeader:boolean,
  *            closePosition:"left"|"right", presentation:"centered"|"sheet",
- *            styleConfig:object}}
+ *            swipeToClose:boolean, styleConfig:object}}
  */
 export function parseConfig(config) {
   const { title, content } = config;
@@ -306,6 +306,11 @@ export function parseConfig(config) {
   // values fall back rather than rendering something unplaceable.
   const presentation = config.presentation === "sheet" ? "sheet" : "centered";
 
+  // swipe_to_close: whether the drag-to-dismiss gesture is attached at all.
+  // Explicit opt-out only, same shape as auto_close_progress — a popup whose
+  // content is mostly a slider can still turn the gesture off outright.
+  const swipeToClose = config.swipe_to_close !== false;
+
   const styleConfig = {};
   for (const key of STYLE_KEYS) {
     if (config[key] != null) styleConfig[key] = config[key];
@@ -320,6 +325,7 @@ export function parseConfig(config) {
     stickyHeader,
     closePosition,
     presentation,
+    swipeToClose,
     styleConfig,
   };
 }
@@ -600,6 +606,19 @@ const STYLES = `
       height: 100%;
       border-radius: 0;
       border: none;
+      /* HA's frontend renders with viewport-fit=cover, so a full-screen
+         surface sits underneath the iOS status bar and home indicator unless
+         it insets itself — confirmed on-device as the title overlapping the
+         clock and the close button overlapping the battery icon. The dialog
+         is already box-sizing: border-box above, so this padding comes out
+         of the 100% height rather than pushing the surface past it. The
+         backdrop is untouched and keeps covering the full screen; only the
+         surface pays the inset back. left/right are 0 in portrait and only
+         matter in landscape on a notched device. */
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      padding-left: env(safe-area-inset-left, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
     }
     /* Full screen here, unlike wider screens where a sticky popup sizes to its
        content. That definite height is also what makes the fill hint safe, so
@@ -611,6 +630,14 @@ const STYLES = `
     .popup-card-dialog.popup-card-sticky .popup-card-content > * {
       display: block;
       height: 100%;
+    }
+    /* The countdown bar is pinned to the dialog's own top edge (see the base
+       .popup-card-progress rule above), which is now under the status bar
+       inset rather than the surface's edge. Follow the same inset here so it
+       lands just below the status bar instead of hidden beneath it. Two
+       classes in the selector out-specify the single-class base rule. */
+    .popup-card-dialog .popup-card-progress {
+      top: env(safe-area-inset-top, 0px);
     }
   }
 
@@ -650,9 +677,14 @@ const STYLES = `
 let overlay = null;
 let escHandler = null;
 let popstateHandler = null;
+let touchActive = false;
+let touchStartX = 0;
 let touchStartY = 0;
 let touchCurrentY = 0;
 let isDragging = false;
+// null until the gesture has traveled far enough to tell horizontal from
+// vertical, then held for the rest of the touch. See onTouchMove.
+let gestureAxis = null;
 let scopeCounter = 0;
 
 function injectStyles(styleHost) {
@@ -783,6 +815,7 @@ export async function show(rawConfig) {
     stickyHeader,
     closePosition,
     presentation,
+    swipeToClose,
     styleConfig,
   } = parseConfig(config);
   if (!content) return;
@@ -935,11 +968,13 @@ export async function show(rawConfig) {
     window.addEventListener("popstate", popstateHandler);
   }
 
-  // Mobile: swipe down to close
-  const dialog = overlay.querySelector(".popup-card-dialog");
-  dialog.addEventListener("touchstart", onTouchStart, { passive: true });
-  dialog.addEventListener("touchmove", onTouchMove, { passive: false });
-  dialog.addEventListener("touchend", onTouchEnd, { passive: true });
+  // Mobile: swipe down to close. Opt-out only — swipeToClose defaults true.
+  if (swipeToClose) {
+    const dialog = overlay.querySelector(".popup-card-dialog");
+    dialog.addEventListener("touchstart", onTouchStart, { passive: true });
+    dialog.addEventListener("touchmove", onTouchMove, { passive: false });
+    dialog.addEventListener("touchend", onTouchEnd, { passive: true });
+  }
 }
 
 export function close() {
@@ -950,6 +985,16 @@ export function close() {
   // a no-op rather than a second teardown.
   const dialogEl = overlay;
   overlay = null;
+
+  // A popup can close mid-drag (auto-close timer, back gesture, Escape), which
+  // never reaches onTouchEnd. Left set, the next popup's first touchmove would
+  // arrive with no touchstart of its own and drag from stale state.
+  touchActive = false;
+  touchStartX = 0;
+  touchStartY = 0;
+  touchCurrentY = 0;
+  isDragging = false;
+  gestureAxis = null;
 
   if (dialogEl._autoCloseTimer) {
     clearTimeout(dialogEl._autoCloseTimer);
@@ -1028,6 +1073,41 @@ function pathIsScrolled(event, dialog) {
   return dialog.scrollTop > 0;
 }
 
+// Elements whose own gesture recognizer wants the exact downward drag the
+// sheet does. role="slider" is what ha-control-slider renders on the element
+// its Hammer pan recognizer binds to — it covers every HA light/cover/fan/
+// climate/volume control, plus any accessible custom slider built the same
+// way. role="switch" and input[type="range"] round out the other native and
+// HA controls a finger can drag or tap-drag across.
+const GESTURE_CONTROL_SELECTOR =
+  '[role="slider"],[role="switch"],input[type="range"]';
+
+/**
+ * Is a gesture-owning control (slider/switch) under the finger?
+ *
+ * The axis lock in onTouchMove separates most conflicts, but not this one: a
+ * vertical ha-control-slider wants the same downward gesture the sheet does,
+ * so no gesture-SHAPE rule can tell them apart — the element under the finger
+ * has to win outright, decided at touchstart before any drag can arm.
+ */
+function pathHasGestureControl(event, dialog) {
+  const path =
+    typeof event.composedPath === "function" ? event.composedPath() : [];
+  const nodes = path.length ? path : [event.target];
+
+  for (const node of nodes) {
+    if (node === dialog) break;
+    if (
+      typeof node?.matches === "function" &&
+      node.matches(GESTURE_CONTROL_SELECTOR)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function onTouchStart(e) {
   const dialog = overlay?.querySelector(".popup-card-dialog");
   if (!dialog) return;
@@ -1035,19 +1115,46 @@ function onTouchStart(e) {
   // Only dismiss when everything under the finger is at its own top.
   if (pathIsScrolled(e, dialog)) return;
 
+  // Never dismiss when the finger is on a slider/switch — see
+  // pathHasGestureControl above.
+  if (pathHasGestureControl(e, dialog)) return;
+
+  touchStartX = e.touches[0].clientX;
   touchStartY = e.touches[0].clientY;
   touchCurrentY = touchStartY;
+  touchActive = true;
   isDragging = false;
+  gestureAxis = null;
 }
 
+// Below this many px of total travel, direction is noise — a stationary
+// finger still jitters a pixel or two. ha-control-slider's own Hammer pan
+// recognizer arms at 10px with DIRECTION_ALL, so deciding the axis at 8
+// resolves the conflict before either side's own threshold fires.
+const AXIS_LOCK_THRESHOLD = 8;
+
 function onTouchMove(e) {
-  if (!touchStartY) return;
+  if (!touchActive) return;
 
   const dialog = overlay?.querySelector(".popup-card-dialog");
   if (!dialog) return;
 
+  const currentX = e.touches[0].clientX;
   touchCurrentY = e.touches[0].clientY;
+  const deltaX = currentX - touchStartX;
   const deltaY = touchCurrentY - touchStartY;
+
+  // Decide the axis once, the first time total travel clears the lock
+  // threshold, and hold it for the rest of the touch (a curved flick that
+  // starts sideways and drifts down stays horizontal).
+  if (gestureAxis === null && Math.hypot(deltaX, deltaY) > AXIS_LOCK_THRESHOLD) {
+    gestureAxis = Math.abs(deltaX) > Math.abs(deltaY) ? "horizontal" : "vertical";
+  }
+
+  // A horizontal gesture is never ours: no drag, no transform, and no
+  // preventDefault — whatever horizontal behavior lives under the finger
+  // (a slider's own value drag, a swipeable row) keeps working untouched.
+  if (gestureAxis === "horizontal") return;
 
   // Only drag downward
   if (deltaY > 10) {
@@ -1061,8 +1168,11 @@ function onTouchMove(e) {
 function onTouchEnd() {
   const dialog = overlay?.querySelector(".popup-card-dialog");
   if (!dialog) {
+    touchActive = false;
+    touchStartX = 0;
     touchStartY = 0;
     isDragging = false;
+    gestureAxis = null;
     return;
   }
 
@@ -1079,9 +1189,12 @@ function onTouchEnd() {
     dialog.style.transform = "";
   }
 
+  touchActive = false;
+  touchStartX = 0;
   touchStartY = 0;
   touchCurrentY = 0;
   isDragging = false;
+  gestureAxis = null;
 }
 
 // ─── Event Listener ────────────────────────────────────────────────────

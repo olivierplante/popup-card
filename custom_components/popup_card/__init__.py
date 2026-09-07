@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "popup_card"
 RESOURCE_URL = "/popup_card/popup-card.js"
 JS_FILE = pathlib.Path(__file__).parent / "www" / "popup-card.js"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 VERSIONED_URL = f"{RESOURCE_URL}?v={VERSION}"
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
