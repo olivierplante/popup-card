@@ -103,4 +103,21 @@ describe("sheet stylesheet contract", () => {
       ".popup-card-overlay.popup-card-sheet .popup-card-dialog",
     );
   });
+
+  it("test_sheet_keeps_its_bottom_inset_and_gains_no_top_inset", async () => {
+    // The sheet is bottom-anchored at max-height: 90vh, so its top edge never
+    // reaches the status bar — unlike the mobile full-screen rule, it must
+    // not gain a top inset here. Its bottom inset (for the home indicator)
+    // predates this change and must survive it untouched.
+    await show({ content: { type: "markdown" }, presentation: "sheet" });
+    const css = structuralStyles();
+    const start = css.indexOf(
+      ".popup-card-overlay.popup-card-sheet .popup-card-dialog {",
+    );
+    const ruleBody = css.slice(start, css.indexOf("}", start));
+    expect(ruleBody).toMatch(
+      /padding-bottom:\s*env\(safe-area-inset-bottom,\s*0px\)/,
+    );
+    expect(ruleBody).not.toMatch(/padding-top:/);
+  });
 });

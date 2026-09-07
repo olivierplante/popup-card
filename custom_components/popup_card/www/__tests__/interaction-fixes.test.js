@@ -201,3 +201,66 @@ describe("sticky sizing", () => {
     expect(document.querySelector(".stub-content-card").layout).toBeUndefined();
   });
 });
+
+describe("mobile safe-area insets", () => {
+  // HA renders with viewport-fit=cover, so the full-screen mobile surface
+  // sits under the iOS status bar and home indicator unless it insets
+  // itself. happy-dom does not evaluate env() or lay anything out, so these
+  // only guard that the rules are emitted — not that the layout is correct.
+  // The real check is on a physical iPhone.
+
+  it("test_mobile_dialog_gets_the_full_safe_area_padding", async () => {
+    await show({ content: { type: "markdown" } });
+    const css = document.querySelector("#popup-card-styles").textContent;
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
+    const dialogRule = mobileBlock.slice(
+      mobileBlock.indexOf(".popup-card-dialog {"),
+    );
+    expect(dialogRule).toMatch(/padding-top:\s*env\(safe-area-inset-top,\s*0px\)/);
+    expect(dialogRule).toMatch(
+      /padding-bottom:\s*env\(safe-area-inset-bottom,\s*0px\)/,
+    );
+    expect(dialogRule).toMatch(
+      /padding-left:\s*env\(safe-area-inset-left,\s*0px\)/,
+    );
+    expect(dialogRule).toMatch(
+      /padding-right:\s*env\(safe-area-inset-right,\s*0px\)/,
+    );
+  });
+
+  it("test_progress_bar_follows_the_top_inset_on_mobile", async () => {
+    await show({ content: { type: "markdown" } });
+    const css = document.querySelector("#popup-card-styles").textContent;
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
+    expect(mobileBlock).toMatch(
+      /\.popup-card-dialog \.popup-card-progress\s*\{[^}]*top:\s*env\(safe-area-inset-top,\s*0px\)/,
+    );
+  });
+
+  it("test_progress_bar_mobile_override_out_specifies_the_base_rule", async () => {
+    await show({ content: { type: "markdown" } });
+    const css = document.querySelector("#popup-card-styles").textContent;
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
+    // The selector charset is restricted to valid bare-class-selector
+    // characters, so a run of comment prose (parens, apostrophes, periods)
+    // between two rules can never be swallowed into a captured selector.
+    const rules = [
+      ...mobileBlock.matchAll(/([.\w\s>-]+)\{([^}]*)\}/g),
+    ];
+    const overrideRule = rules.find(
+      ([, , body]) =>
+        /top:\s*env\(safe-area-inset-top,\s*0px\)/.test(body) &&
+        !/padding-top/.test(body),
+    );
+    expect(overrideRule).not.toBeUndefined();
+    const overrideSelector = overrideRule[1].trim();
+    // The base rule is the single class ".popup-card-progress". Counting "."
+    // markers is a crude but sufficient specificity proxy here: the override
+    // must name more classes to out-specify it, rather than relying on
+    // source order (which the cascade would ignore for a lower-specificity
+    // rule declared later anyway).
+    const baseClassCount = (".popup-card-progress".match(/\./g) || []).length;
+    const overrideClassCount = (overrideSelector.match(/\./g) || []).length;
+    expect(overrideClassCount).toBeGreaterThan(baseClassCount);
+  });
+});

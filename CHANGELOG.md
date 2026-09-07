@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1
+
+**Sliders in popups keep working.** Dragging a slider or a switch inside a popup no longer pulls the popup down or interrupts the control. A swipe now has to be clearly downward to dismiss, and it never starts on a slider or a switch, so side-scrolling content keeps its own gestures too.
+
+**An option to turn the swipe off.** `swipe_to_close: false` disables drag-to-dismiss entirely, for content whose gestures it still gets in the way of. The close button, tapping outside, Escape and the back gesture keep working.
+
+**Full-screen popups clear the iOS status bar.** On a phone the popup fills the screen, and its header was rendering underneath the status bar with the close button under the battery icon. It now keeps clear of the status bar, the home indicator, and the notch in landscape.
+
 ## 1.4.0
 
 **Templates in popup configs.** Values can now carry Jinja, rendered by Home Assistant when the popup opens. A popup can work out which entity to show rather than naming one directly, so a single configuration can serve many entities. Templates are resolved each time the popup opens, so re-opening it picks up the current state. They apply to the popup's own options and to entity fields inside `content` at any depth, including in custom cards, while each card's own templating is left untouched so a markdown card keeps updating the way it always has. The configuration docs cover the details.
